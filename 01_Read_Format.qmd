@@ -1,0 +1,159 @@
+---
+title: "Read and format 2021 Canadian Census Individual File"
+format: gfm
+---
+
+```{r}
+#| label: package-load
+
+library(tidyr)
+library(dplyr)
+library(readr)
+library(stringr)
+library(qs2)
+library(labelled)
+```
+
+# Process dictionary file to get data location
+
+```{r}
+#| label: process-dct
+
+dct_in <- read_lines(here::here("RawDat", "cen21_ind_98m0001x_part_rec21", "English", "SAS, SPSS and STATA command files", "ipumf_2021_final_en.dct"))
+
+dct <-
+  tibble(
+    inp=str_squish(dct_in[c(-1, -length(dct_in))])) |>
+  separate_wider_delim(
+    inp, delim=" ", 
+    names=c("Start", "Type", "Variable", "Length", NA),
+    too_many = "merge"
+  ) |>
+  mutate(
+    Start=parse_number(Start),
+    Length=parse_number(Length),
+    End=Start+Length-1,
+    Type=if_else(Type=="double", "d", "i")) |>
+  select(-Length)
+
+dct
+```
+
+# Process SAS formats for creating factors
+
+```{r}
+#| label: process-fmt
+
+sas_syn_in <- read_lines(here::here("RawDat", "cen21_ind_98m0001x_part_rec21", "English", "SAS, SPSS and STATA command files", "IPUMF_2021_final_prog_en_v2.sas"))
+val_start <- which(str_detect(sas_syn_in, "value"))[1]
+dat_start <- which(str_detect(sas_syn_in, "DATA"))[1]
+
+fmts <- tibble(inp=sas_syn_in[seq(val_start, dat_start-1)]) |>
+  mutate(
+    inp=str_replace(inp, '        205 = "Halifax"', '\t\t205 = "Halifax"') ) |> # Manual fix
+  separate_wider_delim(
+    cols=inp, delim="\t", 
+    names=c(NA, "Value", "Fmts_eq"),
+    too_few="align_start") |>
+  filter(Value != ";") |>
+  mutate(
+    Value=str_remove(Value, "value ") |> na_if("") |>
+      str_to_lower() |> str_squish() |> str_remove("_$")) |>
+  fill(Value) |>
+  filter(!is.na(Fmts_eq)) |>
+  separate_wider_delim(cols=Fmts_eq, delim="=",
+                       names=c("lev", "lab")) |>
+  mutate(
+    lev=parse_number(lev),
+    lab=str_squish(lab) |> str_remove_all('\\"')
+  )
+
+# Variables without formats
+# All are expected to not have formats
+
+setdiff(dct$Variable, unique(fmts$Value))
+
+# Formats without variables (shouldn't happen)
+
+setdiff(unique(fmts$Value), dct$Variable)
+
+```
+
+```{r}
+#| label: get-labels
+
+labs <- tibble(inp=sas_syn_in) |>
+  filter(str_detect(inp, "Label")) |>
+  mutate(inp=str_remove_all(inp, "\\tLabel ")) |>
+  separate_wider_delim(cols=inp, delim="=",
+                       names=c("Variable", "Description")) |>
+  mutate(
+    Variable=Variable |> str_squish() |> str_to_lower(),
+    Description=Description |> str_remove_all('\\"') |> str_remove_all(";") |> str_replace_all("\x96", "-") |> str_squish(),
+    Description=if_else(
+      str_detect(Description, "Replicate"),
+      str_c(Description, str_remove(Variable, "wt"), sep=" "),
+      Description)
+    
+  )
+
+labs
+tail(labs)
+
+all(sort(unique(dct$Variable))==sort(labs$Variable))
+```
+
+
+# Read in data and create factors
+
+```{r}
+#| label: read-dat
+
+dat_in <- read_fwf(
+  here::here("RawDat", "cen21_ind_98m0001x_part_rec21", "data_donnees_2021_ind.dat"),
+  col_positions = fwf_positions(start=dct$Start, end=dct$End, col_names=dct$Variable),
+  col_types = str_flatten(dct$Type_short))
+```
+
+```{r}
+#| label: apply-fmt-labels
+
+apply_format <- function(x){
+  variable_name <- deparse(substitute(x))
+  fmt_x <- fmts |>
+    filter(Value==variable_name)
+  
+  if (!all(x %in% fmt_x$lev)){
+    stop(glue::glue("In variable {variable_name}, there's an unexpected level"))
+  }
+  
+  x |> factor(levels=fmt_x$lev, labels=fmt_x$lab)
+  
+}
+
+dat <- dat_in |>
+  mutate(across(all_of(unique(fmts$Value)), apply_format))
+
+var_label(dat) <- as.list(labs$Description) |> rlang::set_names(labs$Variable)
+
+```
+
+# Summarize and save data
+
+```{r}
+#| label: summary
+#| results: asis
+#| comment: NA
+#| prompt: false
+
+summarytools::dfSummary(dat, style="grid", graph.col=FALSE, plain.ascii=FALSE)
+```
+
+
+```{r}
+#| label: save
+
+qd_save(dat, here::here("Microdat", "data_fmt_2021_ind.qs2"))
+
+```
+
