@@ -1,0 +1,153 @@
+---
+title: "Survey Analysis with 2021 Canadian Census"
+format: gfm
+---
+
+```{r}
+#| label: load-packages
+
+library(duckdb)
+library(dbplyr)
+library(srvyr)
+```
+
+# Create database and load data
+
+The code below creates a temporary duckdb database. It then directly reads the csv into the database. This does NOT load into your R memory! This is great for low RAM environments. 
+
+We then add a convenient variable pointing to the table in the database (`c2021_ind_db`). 
+
+```{r}
+#| label: init-db
+
+con <- dbConnect(duckdb())
+nread <-duckdb_read_csv(
+  conn=con, 
+  name="c2021_ind", # Table name in database
+  here::here("RawDat", "cen21_ind_98m0001x_part_rec21", "data_donnees_2021_ind_v2.csv") # location of csv
+)
+
+c2021_ind_db <- dplyr::tbl(con, I("c2021_ind"))
+
+```
+
+The only value returned is the number of rows that went into the table - this can be a good check to compare with documentation. We can see that `r prettyNum(nread, big.mark=",")` rows are read using the variable `nread`. 
+
+Note that the object (`c2021_ind_db`) is not a tibble or dataframe but points to the table in the database. It is lazily loaded, take a look at what it looks like when printing:
+
+```{r}
+#| label: show-tab
+
+c2021_ind_db
+```
+
+
+# Creating the survey design object
+
+We create the survey design object from the database table. Again, this does not load the data into R.
+
+```{r}
+#| label: surv-obj
+
+cdes <- c2021_ind_db |>
+  as_survey_rep(weights=WEIGHT, repweights=starts_with("WT"), type="other", scale = 1/35, mse=TRUE, rscales=1)
+
+cdes
+```
+
+# Examples
+
+Demonstrating examples from the 2021 Census Public Use  Microdata File (PUMF) Individuals File Documentation and User guide. This text comes directly from the documentation but we demonstrate the way to do the calculations in R. Some calculations yield slightly different results and may be due to version differences in the data used for documentation and that used on the PUMF.
+
+## Example 1/Example 5
+
+The objective is to estimate the total number of women+ aged 25 and over living in the Edmonton census metropolitan area (CMA) whose highest level of schooling was a master's degree or a doctorate. 
+
+First, we identify the records that satisfy the condition CMA = 835, GENDER = 1, (AGEGRP ≥ 9 and AGEGRP ^= 88) and HDGREE = 12 or 13 on the file. We accordingly obtain a total of 915 records that satisfy the condition. 
+
+Secondly, we estimate the population total by summing up the WEIGHT of the 915 records. The estimate of the population total is 33,865.
+
+```{r}
+#| label: examp-1
+cdes |>
+  filter(
+    CMA==835,
+    Gender==1, 
+    AGEGRP %in% 9:21,
+    HDGREE %in% 12:13) |>
+  summarize(
+    Est = survey_total(),
+    NRec= unweighted(n())
+  )
+```
+
+## Example 2/Example 6
+
+In this example, the denominator targets all individuals in a geographic area. We want to estimate the proportion of immigrants among the individuals living in the Montréal CMA. 
+
+First, we identify the records that satisfy the condition IMMSTAT = 2 and CMA = 462 on the file, as well as the records that satisfy the condition CMA = 462. 
+
+Second, we calculate the two corresponding weighted totals.
+
+Finally, the ratio of the two totals is the estimated proportion of immigrants among the individuals living in the Montréal CMA.
+
+The estimated proportion is 1,024,916 / 4,210,000 = 0.2434, which means that just over 24% of the individuals in the Montréal CMA are immigrants.
+
+```{r}
+#| label: examp-2
+cdes |>
+  filter(CMA==462) |>
+  group_by(IMMSTAT) |>
+  summarize(
+    tot=survey_total(),
+    p=survey_mean()*100
+  )
+```
+
+## Example 3/Example 7
+
+We want to estimate, out of all men+ aged 20 to 44 living in the Vancouver CMA, the proportion whose de facto marital status is 'divorced (and not living common law).' In this case, the numerator is the weighted total of records satisfying the condition CMA = 933, GENDER = 2, 8 ≤ AGEGRP ≤ 12 and MARSTH = 5. The denominator is the weighted total of records satisfying CMA = 933, GENDER = 2 and 8 ≤ AGEGRP ≤ 12. We obtain 6,815 / 472,361 = 0.0144, which means approximately 1.4% of men+ aged 20 to 44 in Vancouver are divorced and not living common law
+
+```{r}
+#| label: examp-3
+
+cdes |>
+  filter(
+    CMA==933,
+    Gender ==2,
+    between(AGEGRP, 8, 12)
+  ) |>
+  group_by(MarStH) |>
+   summarize(
+    tot=survey_total(),
+    p=survey_mean()*100
+  )
+```
+
+## Example 4/Example 8
+
+We want to estimate the average total income of women+ aged 15 years and over living in Ontario who have an income (including negative values). In the calculation of the numerator, WEIGHT is multiplied by the value of the 'total income' variable for individuals with an income (where TOTINC ^= 88,888,888, TOTINC ^= 99,999,999, TOTINC ^= 0) whose gender is women+ (GENDER = 1) and who are aged 15 or over (AGEGRP ≥ 6, AGEGRP ^= 88) in the province of Ontario (PR = 35); the results are then totalled. 
+
+To estimate the average, the numerator (or estimated total income) is divided by the sum of WEIGHT for individuals satisfying the same conditions on TOTINC, GENDER, AGEGRP and PR. The result obtained is: \$ 278,486,550,046/ 5,771,535= \$48,252, which means the average total income of women+ aged 15 and over living in Ontario who have an income is around \$48,252.
+
+```{r}
+#| label: examp-4
+
+cdes |>
+  filter(
+    Gender ==1,
+    PR == 35,
+    AGEGRP >= 8,
+    AGEGRP !=88,
+    !(TotInc %in% c(0, 88888888, 99999999))
+  ) |>
+  summarize(
+    Avg=survey_mean(TotInc)
+  )
+```
+
+# References
+
+Source: Statistics Canada, Census Public Use Microdata File (PUMF), 2021. Reproduced and distributed on an "as is" basis with the permission of Statistics Canada.
+
+Adapted from Statistics Canada, Census Public Use  Microdata File (PUMF) Individuals File Documentation and User guide, 2021. This does not constitute an endorsement by Statistics Canada of this product.
