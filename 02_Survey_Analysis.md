@@ -19,6 +19,34 @@ library(srvyr)
 
         filter
 
+# Download data
+
+``` r
+if (!dir.exists("RawDat")){
+  dir.create("RawDat")
+}
+if (! (file.exists(here::here("RawDat", "cen21_ind_98m0001x_part_rec21", "data_donnees_2021_ind_v2.csv")) ||
+       file.exists(here::here("RawDat", "cen21_ind_98m0001x_part_rec21.zip"))
+)){
+  download.file(
+    "https://www150.statcan.gc.ca/n1/pub/98m0001x/2023001/cen21_ind_98m0001x_part_rec21.zip", 
+    destfile = here::here("RawDat", "cen21_ind_98m0001x_part_rec21.zip"))
+  if (!dir.exists(here::here("RawDat", "cen21_ind_98m0001x_part_rec21"))){
+    dir.create(here::here("RawDat", "cen21_ind_98m0001x_part_rec21"))
+  } 
+  file_list <-   unzip(
+    here::here("RawDat", "cen21_ind_98m0001x_part_rec21.zip"),
+    list=TRUE) |>
+    dplyr::filter(!stringr::str_starts(Name, "Fran"))
+
+  unzip(
+    here::here("RawDat", "cen21_ind_98m0001x_part_rec21.zip"),
+    exdir=here::here("RawDat", "cen21_ind_98m0001x_part_rec21"),
+    files=file_list$Name,
+    overwrite = TRUE)
+}
+```
+
 # Create database and load data
 
 The code below creates a temporary duckdb database. It then directly
