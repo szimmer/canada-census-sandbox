@@ -44,8 +44,11 @@ this can be a good check to compare with documentation. We can see that
 980,868 rows are read using the variable `nread`.
 
 Note that the object (`c2021_ind_db`) is not a tibble or dataframe but
-points to the table in the database. It is lazily loaded, take a look at
-what it looks like when printing:
+points to the table in the database. However, the survey variables are
+stored in the object - which includes the analytic weight, the replicate
+weights (if applicable), and the stratum or cluster variables (if
+applicable). Thus, the size of the object is NOT impacted by analytic
+variables.
 
 ``` r
 c2021_ind_db
@@ -73,14 +76,29 @@ c2021_ind_db
     #   EICBN <int>, ETHDER <int>, EfDIMBM_2018 <int>, EfSize <int>, EmpIn <int>,
     #   FOL <int>, FPTWK <int>, Gender <int>, GENSTAT <int>, GovtI <int>, …
 
+``` r
+object.size(c2021_ind_db) |> print(units="Kb")
+```
+
+    50.9 Kb
+
 # Creating the survey design object
 
 We create the survey design object from the database table. Again, this
-does not load the data into R.
+does not load the data into R. Note, if you want to specify the degrees
+of freedom, this is the best time to do it by using the option `degf` in
+the function `as_survey_rep()` which will improve computation if
+confidence intervals or testing are desired later.
 
 ``` r
 cdes <- c2021_ind_db |>
-  as_survey_rep(weights=WEIGHT, repweights=starts_with("WT"), type="other", scale = 1/35, mse=TRUE, rscales=1)
+  as_survey_rep(
+    weights=WEIGHT,
+    repweights=starts_with("WT"),
+    type="other",
+    scale = 1/35,
+    mse=TRUE,
+    rscales=1)
 
 cdes
 ```
@@ -121,14 +139,18 @@ cdes
         WT9 (dbl), WT10 (dbl), WT11 (dbl), WT12 (dbl), WT13 (dbl), WT14 (dbl), WT15
         (dbl), WT16 (dbl)
 
+``` r
+object.size(cdes) |> print(units="Kb")
+```
+
+    191648.1 Kb
+
 # Examples
 
 Demonstrating examples from the 2021 Census Public Use Microdata File
 (PUMF) Individuals File Documentation and User guide. This text comes
 directly from the documentation but we demonstrate the way to do the
-calculations in R. Some calculations yield slightly different results
-and may be due to version differences in the data used for documentation
-and that used on the PUMF.
+calculations in R.
 
 ## Example 1/Example 5
 
@@ -144,13 +166,17 @@ condition.
 Secondly, we estimate the population total by summing up the WEIGHT of
 the 915 records. The estimate of the population total is 33,865.
 
+SE from docs: Thus, this method yields an estimate of the standard error
+of 1,173.47
+
 ``` r
 cdes |>
   filter(
     CMA==835,
     Gender==1, 
-    AGEGRP %in% 9:21,
-    HDGREE %in% 12:13) |>
+    between(AGEGRP, 9, 21),
+    between(HDGREE, 12, 13)
+    ) |>
   summarize(
     Est = survey_total(),
     NRec= unweighted(n())
@@ -160,7 +186,7 @@ cdes |>
     # A tibble: 1 × 3
          Est Est_se  NRec
        <dbl>  <dbl> <int>
-    1 33886.   901.   915
+    1 33865.  1173.   915
 
 ## Example 2/Example 6
 
@@ -180,6 +206,9 @@ immigrants among the individuals living in the Montréal CMA.
 The estimated proportion is 1,024,916 / 4,210,000 = 0.2434, which means
 that just over 24% of the individuals in the Montréal CMA are
 immigrants.
+
+SE from docs: Thus, this method yields an estimate of the standard error
+of 0.1014%.
 
 ``` r
 cdes |>
@@ -211,6 +240,9 @@ weighted total of records satisfying the condition CMA = 933, GENDER =
 of records satisfying CMA = 933, GENDER = 2 and 8 ≤ AGEGRP ≤ 12. We
 obtain 6,815 / 472,361 = 0.0144, which means approximately 1.4% of men+
 aged 20 to 44 in Vancouver are divorced and not living common law
+
+SE from docs: Thus, this method yields an estimate of the standard error
+of 0.1414%.
 
 ``` r
 cdes |>
@@ -256,12 +288,15 @@ conditions on TOTINC, GENDER, AGEGRP and PR. The result obtained is: \$
 income of women+ aged 15 and over living in Ontario who have an income
 is around \$48,252.
 
+SE from docs: Thus, this method yields an estimate of the standard error
+of 102.15.
+
 ``` r
 cdes |>
   filter(
     Gender ==1,
     PR == 35,
-    AGEGRP >= 8,
+    AGEGRP >= 6,
     AGEGRP !=88,
     !(TotInc %in% c(0, 88888888, 99999999))
   ) |>
@@ -273,7 +308,7 @@ cdes |>
     # A tibble: 1 × 2
          Avg Avg_se
        <dbl>  <dbl>
-    1 49842.   105.
+    1 48252.   102.
 
 # References
 

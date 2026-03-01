@@ -28,36 +28,44 @@ nread <-duckdb_read_csv(
 )
 
 c2021_ind_db <- dplyr::tbl(con, I("c2021_ind"))
-
 ```
 
 The only value returned is the number of rows that went into the table - this can be a good check to compare with documentation. We can see that `r prettyNum(nread, big.mark=",")` rows are read using the variable `nread`. 
 
-Note that the object (`c2021_ind_db`) is not a tibble or dataframe but points to the table in the database. It is lazily loaded, take a look at what it looks like when printing:
+Note that the object (`c2021_ind_db`) is not a tibble or dataframe but points to the table in the database. However, the survey variables are stored in the object - which includes the analytic weight, the replicate weights (if applicable), and the stratum or cluster variables (if applicable). Thus, the size of the object is NOT impacted by analytic variables.
 
 ```{r}
 #| label: show-tab
 
 c2021_ind_db
+object.size(c2021_ind_db) |> print(units="Kb")
 ```
 
 
 # Creating the survey design object
 
-We create the survey design object from the database table. Again, this does not load the data into R.
+We create the survey design object from the database table. Again, this does not load the data into R. Note, if you want to specify the degrees of freedom, this is the best time to do it by using the option `degf` in the function `as_survey_rep()` which will improve computation if confidence intervals or testing are desired later.
 
 ```{r}
 #| label: surv-obj
 
 cdes <- c2021_ind_db |>
-  as_survey_rep(weights=WEIGHT, repweights=starts_with("WT"), type="other", scale = 1/35, mse=TRUE, rscales=1)
+  as_survey_rep(
+    weights=WEIGHT,
+    repweights=starts_with("WT"),
+    type="other",
+    scale = 1/35,
+    mse=TRUE,
+    rscales=1)
 
 cdes
+
+object.size(cdes) |> print(units="Kb")
 ```
 
 # Examples
 
-Demonstrating examples from the 2021 Census Public Use  Microdata File (PUMF) Individuals File Documentation and User guide. This text comes directly from the documentation but we demonstrate the way to do the calculations in R. Some calculations yield slightly different results and may be due to version differences in the data used for documentation and that used on the PUMF.
+Demonstrating examples from the 2021 Census Public Use  Microdata File (PUMF) Individuals File Documentation and User guide. This text comes directly from the documentation but we demonstrate the way to do the calculations in R.
 
 ## Example 1/Example 5
 
@@ -67,14 +75,17 @@ First, we identify the records that satisfy the condition CMA = 835, GENDER = 1,
 
 Secondly, we estimate the population total by summing up the WEIGHT of the 915 records. The estimate of the population total is 33,865.
 
+SE from docs: Thus, this method yields an estimate of the standard error of 1,173.47
+
 ```{r}
 #| label: examp-1
 cdes |>
   filter(
     CMA==835,
     Gender==1, 
-    AGEGRP %in% 9:21,
-    HDGREE %in% 12:13) |>
+    between(AGEGRP, 9, 21),
+    between(HDGREE, 12, 13)
+    ) |>
   summarize(
     Est = survey_total(),
     NRec= unweighted(n())
@@ -93,6 +104,8 @@ Finally, the ratio of the two totals is the estimated proportion of immigrants a
 
 The estimated proportion is 1,024,916 / 4,210,000 = 0.2434, which means that just over 24% of the individuals in the Montréal CMA are immigrants.
 
+SE from docs: Thus, this method yields an estimate of the standard error of 0.1014%.
+
 ```{r}
 #| label: examp-2
 cdes |>
@@ -107,6 +120,8 @@ cdes |>
 ## Example 3/Example 7
 
 We want to estimate, out of all men+ aged 20 to 44 living in the Vancouver CMA, the proportion whose de facto marital status is 'divorced (and not living common law).' In this case, the numerator is the weighted total of records satisfying the condition CMA = 933, GENDER = 2, 8 ≤ AGEGRP ≤ 12 and MARSTH = 5. The denominator is the weighted total of records satisfying CMA = 933, GENDER = 2 and 8 ≤ AGEGRP ≤ 12. We obtain 6,815 / 472,361 = 0.0144, which means approximately 1.4% of men+ aged 20 to 44 in Vancouver are divorced and not living common law
+
+SE from docs: Thus, this method yields an estimate of the standard error of 0.1414%.
 
 ```{r}
 #| label: examp-3
@@ -130,6 +145,8 @@ We want to estimate the average total income of women+ aged 15 years and over li
 
 To estimate the average, the numerator (or estimated total income) is divided by the sum of WEIGHT for individuals satisfying the same conditions on TOTINC, GENDER, AGEGRP and PR. The result obtained is: \$ 278,486,550,046/ 5,771,535= \$48,252, which means the average total income of women+ aged 15 and over living in Ontario who have an income is around \$48,252.
 
+SE from docs: Thus, this method yields an estimate of the standard error of 102.15.
+
 ```{r}
 #| label: examp-4
 
@@ -137,7 +154,7 @@ cdes |>
   filter(
     Gender ==1,
     PR == 35,
-    AGEGRP >= 8,
+    AGEGRP >= 6,
     AGEGRP !=88,
     !(TotInc %in% c(0, 88888888, 99999999))
   ) |>
